@@ -5,7 +5,12 @@ import { redis } from "../lib/redis.js";
 
 dotenv.config();
 
-// Generate token
+/**
+ * Generates access and refresh tokens for a given user ID.
+ *
+ * @param {string} userId - The ID of the user for whom the tokens are being generated.
+ * @returns {Object} An object containing the accessToken and refreshToken.
+ */
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ userId }, process.env.ACCESS_TOKEN_SECRET, {
     expiresIn: "15m",
@@ -17,7 +22,13 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
-// Store token
+/**
+ * Stores a refresh token in Redis for a given user ID.
+ *
+ * @param {string} userId - The ID of the user for whom the refresh token is being stored.
+ * @param {string} refreshToken - The refresh token to store.
+ * @returns {Promise<void>} A promise that resolves when the token is successfully stored.
+ */
 const storeRefreshToken = async (userId, refreshToken) => {
   await redis.set(
     `refresh_token:${userId}`,
@@ -27,7 +38,14 @@ const storeRefreshToken = async (userId, refreshToken) => {
   );
 };
 
-// Setcookies function
+/**
+ * Sets access and refresh tokens as HTTP-only cookies in the response.
+ *
+ * @param {Object} res - The response object to set the cookies on.
+ * @param {string} accessToken - The access token to set in the cookie.
+ * @param {string} refreshToken - The refresh token to set in the cookie.
+ * @returns {void}
+ */
 const setCookies = (res, accessToken, refreshToken) => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true, // Prevent XSS attacks
@@ -43,6 +61,11 @@ const setCookies = (res, accessToken, refreshToken) => {
   });
 };
 
+/**
+ * ==========================================
+ *                SIGNUP
+ * ==========================================
+ */
 export const signup = async (_req, res) => {
   const { name, email, password } = _req.body;
 
@@ -58,22 +81,56 @@ export const signup = async (_req, res) => {
     const newUser = await User.create({ name, email, password });
 
     // Authenticate user
-    const { accessToken, refreshToken } = generateTokens(user._id);
-    await storeRefreshToken(user._id, refreshToken);
+    const { accessToken, refreshToken } = generateTokens(newUser._id);
+    await storeRefreshToken(newUser._id, refreshToken);
 
     // Set tokens inside cookie
     setCookies(res, accessToken, refreshToken);
 
-    res.status(201).json({ newUser, message: "User created successfully" });
+    res.status(201).json({
+      newUser: {
+        _id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+      },
+      message: "User created successfully",
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+/**
+ * ==========================================
+ *                LOGIN
+ * ==========================================
+ */
 export const login = async (_req, res) => {
   res.send("Login route called");
 };
 
-export const logout = async (_req, res) => {
-  res.send("Logout route called");
+/**
+ * ==========================================
+ *                LOGOUT
+ * ==========================================
+ */
+export const logout = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (refreshToken) {
+      const decoded = jwt.verify(
+        refreshToken,
+        process.env.REFRESH_TOKEN_SECRET
+      );
+      await redis.del(`refresh_token:${decoded.userId}`);
+    }
+
+    res.clearCookie("accessToken");
+    res.clearCookie("refreshToken");
+    res.status(200).json({ message: "Logout successful" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
