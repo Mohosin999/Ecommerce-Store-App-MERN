@@ -1,8 +1,6 @@
-# E-commerce Store App
+# E-commerce Store App (Incomplete)
 
-#### User authentication (signup, login, logout) completed.
+### User authentication (signup, login, logout) completed. It's time to work with product related functionalities.
 
-#### Working with "generate refresh token" function.
-
-- Video Length: 1 hour and 14 minutes
-- Folder and File: /controllers and /auth.controller.js
+- 1 h / 32 m
+- Location: /backend/middleware/auth.middleware.js
