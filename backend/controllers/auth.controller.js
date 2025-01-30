@@ -30,12 +30,17 @@ const generateTokens = (userId) => {
  * @returns {Promise<void>} A promise that resolves when the token is successfully stored.
  */
 const storeRefreshToken = async (userId, refreshToken) => {
-  await redis.set(
-    `refresh_token:${userId}`,
-    refreshToken,
-    "EX",
-    7 * 24 * 60 * 60
-  );
+  try {
+    await redis.set(
+      `refresh_token:${userId}`,
+      refreshToken,
+      "EX",
+      7 * 24 * 60 * 60
+    );
+  } catch (error) {
+    console.error("Error storing refresh token in Redis:", error);
+    throw error;
+  }
 };
 
 /**
@@ -66,8 +71,8 @@ const setCookies = (res, accessToken, refreshToken) => {
  *                SIGNUP
  * ==========================================
  */
-export const signup = async (_req, res) => {
-  const { name, email, password } = _req.body;
+export const signup = async (req, res) => {
+  const { name, email, password } = req.body;
 
   try {
     // Check if user already exists
@@ -88,15 +93,13 @@ export const signup = async (_req, res) => {
     setCookies(res, accessToken, refreshToken);
 
     res.status(201).json({
-      newUser: {
-        _id: newUser._id,
-        name: newUser.name,
-        email: newUser.email,
-        role: newUser.role,
-      },
-      message: "User created successfully",
+      _id: newUser._id,
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
     });
   } catch (error) {
+    console.error("Error during signup:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -106,8 +109,42 @@ export const signup = async (_req, res) => {
  *                LOGIN
  * ==========================================
  */
-export const login = async (_req, res) => {
-  res.send("Login route called");
+export const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Check if user exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Check if password is correct
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Generate tokens
+    const { accessToken, refreshToken } = generateTokens(user._id);
+
+    // Store refresh token in Redis
+    await storeRefreshToken(user._id, refreshToken);
+
+    // Set tokens inside cookie
+    setCookies(res, accessToken, refreshToken);
+
+    // Send response
+    res.status(200).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    });
+  } catch (error) {
+    console.error("Error during login:", error);
+    res.status(500).json({ message: `Login Unsuccessful: ${error.message}` });
+  }
 };
 
 /**
@@ -131,6 +168,51 @@ export const logout = async (req, res) => {
     res.clearCookie("refreshToken");
     res.status(200).json({ message: "Logout successful" });
   } catch (error) {
+    console.error("Error during logout:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
+/**
+ * ==========================================
+ *    This will refresh the access token
+ * ==========================================
+ */
+export const refreshToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ message: "No refresh token provided" });
+    }
+
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
+    const storedToken = await redis.get(`refresh_token:${decoded.userId}`);
+
+    if (storedToken !== refreshToken) {
+      return res.status(401).json({ message: "Invalid refresh token" });
+    }
+
+    // Create new access token
+    const accessToken = jwt.sign(
+      { userId: decoded.userId },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: "15m" }
+    );
+
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true, // Prevent XSS attacks
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    res.json({ message: "Token refresh successfully" });
+  } catch (error) {
+    console.error("Error during signup:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// TODO: Implement it later
+// export const getProfile = async (req, res) => {};
